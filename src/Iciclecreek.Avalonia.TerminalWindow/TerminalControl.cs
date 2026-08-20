@@ -164,6 +164,24 @@ namespace Iciclecreek.Terminal
 
 
         /// <summary>
+        /// Writes host-supplied text into the terminal and repaints. Returns false when the
+        /// template has not been applied yet (no inner view to write to) so the caller can
+        /// buffer the text and replay it once the control is loaded.
+        /// </summary>
+        /// <remarks>
+        /// Prefer this over <c>Terminal.Write</c>, which updates the buffer without invalidating
+        /// the view — see <see cref="TerminalView.Write"/>.
+        /// </remarks>
+        public bool Write(string text)
+        {
+            if (_terminalView == null)
+                return false;
+
+            _terminalView.Write(text);
+            return true;
+        }
+
+        /// <summary>
         /// Waits for the terminal process to exit, with a timeout in milliseconds.
         /// </summary>
         /// <param name="ms">The maximum amount of time to wait, in milliseconds.</param>

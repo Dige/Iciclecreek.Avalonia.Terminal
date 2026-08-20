@@ -516,24 +516,67 @@ namespace Iciclecreek.Terminal
         }
 
         /// <summary>
-        /// Maximum scroll position (total buffer lines - viewport lines).
-        /// This is the maximum value ViewportY can be.
+        /// Maximum scroll position. This is the maximum value ViewportY can be.
         /// </summary>
         public int MaxScrollback
         {
-            get
-            {
-                // Simple: total lines in buffer minus how many we can see
-                var totalLines = _terminal.Buffer.Length;
-                var viewportLines = _terminal.Rows;
-                var max = Math.Max(0, totalLines - viewportLines);
-                return max;
-            }
+            // YBase, not Length - Rows: the buffer starts life with a full screen of blank
+            // lines and keeps them when the control is arranged shorter than the 80x24
+            // default, so Length - Rows reports scrollback that does not exist. The buffer
+            // clamps ViewportY to YBase, so YBase is the real ceiling.
+            get => _terminal.Buffer.YBase;
         }
 
         public int ViewportLines => _terminal.Rows;
 
         public XTerm.Terminal Terminal => _terminal;
+
+        /// <summary>
+        /// Writes host-supplied text into the terminal, exactly as if it had arrived from the
+        /// running process: the view scrolls to the bottom, the scrollbar range is refreshed and
+        /// the control repaints.
+        /// </summary>
+        /// <remarks>
+        /// Always prefer this over <c>Terminal.Write</c>. Writing straight to the buffer updates
+        /// no view state at all — nothing invalidates the control, so the text stays invisible
+        /// until something unrelated (a click, a resize, the cursor blink) happens to repaint.
+        /// Safe to call from any thread; the scrollbar notifications are posted to the UI thread.
+        /// </remarks>
+        public void Write(string text)
+        {
+            if (string.IsNullOrEmpty(text))
+                return;
+
+            // Snapshot before the write so we only notify on a real change, mirroring
+            // ReadPtyOutputAsync.
+            var oldMax = MaxScrollback;
+            var oldY = _terminal.Buffer.ViewportY;
+
+            lock (_terminalLock)
+            {
+                _terminal.Write(text);
+            }
+
+            // Alternate buffer (vim, htop, …) positions its own content and must not be scrolled.
+            if (!_isAlternateBuffer)
+                _terminal.Buffer.ScrollToBottom();
+
+            var newMax = MaxScrollback;
+            var newY = _terminal.Buffer.ViewportY;
+
+            if (oldMax != newMax || oldY != newY)
+            {
+                Dispatcher.UIThread.Post(() =>
+                {
+                    if (oldMax != newMax)
+                        RaisePropertyChanged(MaxScrollbackProperty, oldMax, newMax);
+                    if (oldY != newY)
+                        RaisePropertyChanged(ViewportYProperty, oldY, newY);
+                });
+            }
+
+            this.RequestInvalidate();
+        }
 
         public void WaitForExit(int ms) => _ptyConnection?.WaitForExit(ms);
 
